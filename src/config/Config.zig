@@ -7110,6 +7110,11 @@ pub const RepeatableCommand = struct {
         }
 
         for (self.value.items) |item| {
+            // Skip default commands to avoid outputting them in config files.
+            // Users don't need to (and shouldn't) explicitly configure these
+            // as they're built-in defaults.
+            if (isDefaultCommand(item)) continue;
+
             var buf: [4096]u8 = undefined;
             var writer: std.Io.Writer = .fixed(&buf);
 
@@ -7129,6 +7134,13 @@ pub const RepeatableCommand = struct {
 
             try formatter.formatEntry([]const u8, writer.buffered());
         }
+    }
+
+    fn isDefaultCommand(cmd: inputpkg.Command) bool {
+        for (inputpkg.command.defaults) |default| {
+            if (cmd.equal(default)) return true;
+        }
+        return false;
     }
 
     test "RepeatableCommand parseCLI" {
@@ -7242,6 +7254,69 @@ pub const RepeatableCommand = struct {
             try testing.expectEqualStrings("kurwa", item.action.text);
         }
     }
+
+    test "RepeatableCommand roundtrip with comma in action" {
+        const testing = std.testing;
+        var arena = ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        // Test write_screen_file action which contains comma in its format
+        var list1: RepeatableCommand = .{};
+        try list1.parseCLI(alloc, "title:Test,action:write_screen_file:copy,html");
+        try testing.expectEqual(@as(usize, 1), list1.value.items.len);
+
+        // Format it back
+        var buf1: std.Io.Writer.Allocating = .init(alloc);
+        defer buf1.deinit();
+        try list1.formatEntry(formatterpkg.entryFormatter("a", &buf1.writer));
+
+        // The formatted output should be parseable
+        const formatted = buf1.written();
+        const value_start = std.mem.indexOf(u8, formatted, "=").? + 2; // skip "= "
+        const value = std.mem.trim(u8, formatted[value_start .. formatted.len - 1], " \t"); // trim newline
+
+        // Parse it back
+        var list2: RepeatableCommand = .{};
+        try list2.parseCLI(alloc, value);
+        try testing.expectEqual(@as(usize, 1), list2.value.items.len);
+
+        // Verify the action is the same
+        try testing.expect(list2.value.items[0].action == .write_screen_file);
+        try testing.expectEqual(
+            list1.value.items[0].action.write_screen_file,
+            list2.value.items[0].action.write_screen_file,
+        );
+    }
+
+    test "RepeatableCommand formatEntry skips defaults" {
+        const testing = std.testing;
+        var arena = ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var list: RepeatableCommand = .{};
+        // Initialize with defaults
+        try list.init(alloc);
+
+        // Add a custom command
+        try list.parseCLI(alloc, "title:Custom,action:ignore");
+
+        // Format the list
+        var buf: std.Io.Writer.Allocating = .init(alloc);
+        defer buf.deinit();
+        try list.formatEntry(formatterpkg.entryFormatter("a", &buf.writer));
+
+        const output = buf.written();
+
+        // Output should only contain the custom command, not defaults
+        try testing.expect(std.mem.indexOf(u8, output, "Custom") != null);
+
+        // Default commands should not appear in output
+        // (checking for a known default title)
+        try testing.expect(std.mem.indexOf(u8, output, "Copy Screen as HTML") == null);
+    }
+
 };
 
 /// OSC 4, 10, 11, and 12 default color reporting format.
