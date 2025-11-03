@@ -7261,9 +7261,10 @@ pub const RepeatableCommand = struct {
         defer arena.deinit();
         const alloc = arena.allocator();
 
-        // Test write_screen_file action which contains comma in its format
+        // Test write_screen_file action which contains comma in its format.
+        // IMPORTANT: The action value must be quoted because it contains a comma.
         var list1: RepeatableCommand = .{};
-        try list1.parseCLI(alloc, "title:Test,action:write_screen_file:copy,html");
+        try list1.parseCLI(alloc, "title:Test,action:\"write_screen_file:copy,html\"");
         try testing.expectEqual(@as(usize, 1), list1.value.items.len);
 
         // Format it back
